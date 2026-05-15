@@ -1,10 +1,4 @@
-import type { Metadata } from 'next';
-import './globals.css';
-
-export const metadata: Metadata = {
-  title: 'SahiDawa',
-  description: 'India\'s First Open-Source Citizen Medicine Verifier & Rural Health Bridge',
-};
+import '../app/[locale]/globals.css';
 
 export default function RootLayout({
   children,
