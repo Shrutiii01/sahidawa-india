@@ -34,6 +34,17 @@ export interface MapBounds {
     center: { lat: number; lng: number };
 }
 
+export type HeatmapMode = "none" | "density" | "counterfeit" | "combined";
+
+export interface RiskHotspot {
+    id: string;
+    label: string;
+    coordinates: { lat: number; lng: number };
+    intensity: number;
+    category: "density" | "counterfeit";
+    details?: string;
+}
+
 interface PharmacyMapProps {
     pharmacies: Pharmacy[];
     selectedPharmacyId?: number | null;
@@ -44,6 +55,8 @@ interface PharmacyMapProps {
     autoFitBounds?: boolean;
     initialCenter?: { lat: number; lng: number };
     initialZoom?: number;
+    heatmapMode?: HeatmapMode;
+    riskHotspots?: RiskHotspot[];
 }
 
 export default function PharmacyMap({
@@ -55,10 +68,13 @@ export default function PharmacyMap({
     autoFitBounds = true,
     initialCenter,
     initialZoom,
+    heatmapMode = "none",
+    riskHotspots = [],
 }: PharmacyMapProps) {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<any>(null);
     const layerGroup = useRef<any>(null);
+    const heatLayerGroup = useRef<any>(null);
     const userMarker = useRef<any>(null);
     const markersRef = useRef<Map<number, any>>(new Map());
     const [mapError, setMapError] = useState(false);
@@ -117,6 +133,7 @@ export default function PharmacyMap({
                     L.control.zoom({ position: "bottomright" }).addTo(map.current);
 
                     layerGroup.current = L.layerGroup().addTo(map.current);
+                    heatLayerGroup.current = L.layerGroup().addTo(map.current);
 
                     // Fire moveend callback so the page can fetch initial data
                     const getBounds = () => {
@@ -156,6 +173,48 @@ export default function PharmacyMap({
             mounted = false;
         };
     }, []);
+
+    // Update heatmap circles when risk layer changes
+    useEffect(() => {
+        if (!isMapReady || !map.current || !heatLayerGroup.current) return;
+
+        const L = (window as any).L;
+        if (!L) return;
+
+        heatLayerGroup.current.clearLayers();
+        if (heatmapMode === "none") return;
+
+        riskHotspots
+            .filter((hotspot) => heatmapMode === "combined" || hotspot.category === heatmapMode)
+            .forEach((hotspot) => {
+                const normalizedIntensity = Math.max(0.15, Math.min(1, hotspot.intensity));
+                const isCounterfeit = hotspot.category === "counterfeit";
+                const color = isCounterfeit ? "#dc2626" : "#0891b2";
+                const fillColor = isCounterfeit ? "#ef4444" : "#06b6d4";
+                const radius = isCounterfeit
+                    ? 1800 + normalizedIntensity * 4200
+                    : 900 + normalizedIntensity * 2600;
+
+                const circle = L.circle([hotspot.coordinates.lat, hotspot.coordinates.lng], {
+                    radius,
+                    color,
+                    weight: 1,
+                    opacity: 0.42,
+                    fillColor,
+                    fillOpacity: isCounterfeit ? 0.2 : 0.16,
+                    interactive: true,
+                }).addTo(heatLayerGroup.current);
+
+                circle.bindTooltip(
+                    `<strong>${hotspot.label}</strong><br/>${hotspot.details || ""}`,
+                    {
+                        direction: "top",
+                        sticky: true,
+                        opacity: 0.92,
+                    }
+                );
+            });
+    }, [heatmapMode, riskHotspots, isMapReady]);
 
     // Update markers when pharmacies change
     useEffect(() => {

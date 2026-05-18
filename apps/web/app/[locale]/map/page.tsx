@@ -22,12 +22,86 @@ import {
     Store,
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
-import PharmacyMap, { type Pharmacy, type MapBounds } from "./PharmacyMap";
+import PharmacyMap, {
+    type HeatmapMode,
+    type Pharmacy,
+    type MapBounds,
+    type RiskHotspot,
+} from "./PharmacyMap";
 import { fetchPharmacies, fetchPharmaciesInBounds, type OverpassPharmacy } from "./overpassApi";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_CENTER = { lat: 28.6139, lng: 77.209 }; // New Delhi
 const DEFAULT_ZOOM = 13;
+
+const COUNTERFEIT_REPORT_HOTSPOTS: RiskHotspot[] = [
+    {
+        id: "counterfeit-delhi",
+        label: "Delhi NCR report cluster",
+        coordinates: { lat: 28.6139, lng: 77.209 },
+        intensity: 0.92,
+        category: "counterfeit",
+        details: "Higher citizen reports around high-volume pharmacy corridors.",
+    },
+    {
+        id: "counterfeit-mumbai",
+        label: "Mumbai metro report cluster",
+        coordinates: { lat: 19.076, lng: 72.8777 },
+        intensity: 0.78,
+        category: "counterfeit",
+        details: "Clustered reports near dense retail medicine markets.",
+    },
+    {
+        id: "counterfeit-kolkata",
+        label: "Kolkata report cluster",
+        coordinates: { lat: 22.5726, lng: 88.3639 },
+        intensity: 0.64,
+        category: "counterfeit",
+        details: "Moderate counterfeit-report signal from public submissions.",
+    },
+    {
+        id: "counterfeit-hyderabad",
+        label: "Hyderabad report cluster",
+        coordinates: { lat: 17.385, lng: 78.4867 },
+        intensity: 0.58,
+        category: "counterfeit",
+        details: "Emerging report cluster for suspicious medicine listings.",
+    },
+];
+
+function buildDensityHotspots(pharmacies: Pharmacy[]): RiskHotspot[] {
+    const buckets = new Map<string, { count: number; lat: number; lng: number; named: number }>();
+
+    pharmacies.forEach((pharmacy) => {
+        const latBucket = Math.round(pharmacy.coordinates.lat * 20) / 20;
+        const lngBucket = Math.round(pharmacy.coordinates.lng * 20) / 20;
+        const key = `${latBucket}:${lngBucket}`;
+        const current = buckets.get(key) || { count: 0, lat: 0, lng: 0, named: 0 };
+
+        buckets.set(key, {
+            count: current.count + 1,
+            lat: current.lat + pharmacy.coordinates.lat,
+            lng: current.lng + pharmacy.coordinates.lng,
+            named: current.named + (pharmacy.name && pharmacy.name !== "Pharmacy" ? 1 : 0),
+        });
+    });
+
+    const maxCount = Math.max(1, ...Array.from(buckets.values()).map((bucket) => bucket.count));
+
+    return Array.from(buckets.entries())
+        .filter(([, bucket]) => bucket.count >= 2)
+        .map(([key, bucket]) => ({
+            id: `density-${key}`,
+            label: `${bucket.count} pharmacies nearby`,
+            coordinates: {
+                lat: bucket.lat / bucket.count,
+                lng: bucket.lng / bucket.count,
+            },
+            intensity: bucket.count / maxCount,
+            category: "density" as const,
+            details: `${bucket.named} named stores in this local density cluster.`,
+        }));
+}
 
 // ── Data adapter ─────────────────────────────────────────────────────────────
 function toPharmacy(op: OverpassPharmacy & { _distanceFormatted?: string }): Pharmacy {
@@ -261,6 +335,7 @@ export default function PharmacyMapPage() {
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [showSearchArea, setShowSearchArea] = useState(false);
     const [pharmacyCount, setPharmacyCount] = useState(0);
+    const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>("none");
 
     const pendingBoundsRef = useRef<MapBounds | null>(null);
     const initialFetchDone = useRef(false);
@@ -348,6 +423,14 @@ export default function PharmacyMapPage() {
     }, [pharmacies, activeFilter, advancedFilters, searchQuery]);
 
     const activeAdvancedFilterCount = Object.values(advancedFilters).filter(Boolean).length;
+    const densityHotspots = useMemo(
+        () => buildDensityHotspots(filteredPharmacies),
+        [filteredPharmacies]
+    );
+    const riskHotspots = useMemo(
+        () => [...densityHotspots, ...COUNTERFEIT_REPORT_HOTSPOTS],
+        [densityHotspots]
+    );
 
     const updateAdvancedFilter = (key: keyof AdvancedFilters) => {
         setAdvancedFilters((current) => ({ ...current, [key]: !current[key] }));
@@ -404,6 +487,17 @@ export default function PharmacyMapPage() {
             activeClass: "bg-slate-100 text-slate-500",
         },
     ] as const;
+
+    const heatmapOptions: Array<{
+        id: HeatmapMode;
+        label: string;
+        description: string;
+    }> = [
+        { id: "none", label: "Markers", description: "Show pharmacy markers only" },
+        { id: "density", label: "Density", description: "Highlight pharmacy-dense areas" },
+        { id: "counterfeit", label: "Counterfeit", description: "Show report-risk clusters" },
+        { id: "combined", label: "Combined", description: "Show density and report risk together" },
+    ];
 
     return (
         <div className="flex h-screen flex-col overflow-hidden bg-slate-50 font-sans">
@@ -551,6 +645,8 @@ export default function PharmacyMapPage() {
                     autoFitBounds={!isLoading && filteredPharmacies.length > 0}
                     initialCenter={userLocation || DEFAULT_CENTER}
                     initialZoom={DEFAULT_ZOOM}
+                    heatmapMode={heatmapMode}
+                    riskHotspots={riskHotspots}
                 />
 
                 {/* "Search this area" pill */}
@@ -599,6 +695,40 @@ export default function PharmacyMapPage() {
                     >
                         <Navigation size={20} />
                     </button>
+                </div>
+
+                {/* Heatmap layer control */}
+                <div className="absolute top-28 right-4 z-1000 w-44 rounded-2xl border border-slate-100 bg-white/95 p-2 shadow-xl backdrop-blur">
+                    <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-bold text-slate-500">
+                        <AlertCircle size={12} className="text-red-500" />
+                        Risk layers
+                    </div>
+                    <div className="grid gap-1">
+                        {heatmapOptions.map((option) => (
+                            <button
+                                key={option.id}
+                                onClick={() => setHeatmapMode(option.id)}
+                                title={option.description}
+                                className={`rounded-xl px-3 py-2 text-left text-[11px] font-bold transition-all ${
+                                    heatmapMode === option.id
+                                        ? "bg-slate-900 text-white shadow-md"
+                                        : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                                }`}
+                                aria-pressed={heatmapMode === option.id}
+                            >
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                    {heatmapMode !== "none" && (
+                        <p className="mt-2 px-1 text-[10px] leading-snug text-slate-400">
+                            {heatmapMode === "counterfeit"
+                                ? `${COUNTERFEIT_REPORT_HOTSPOTS.length} report clusters`
+                                : heatmapMode === "density"
+                                  ? `${densityHotspots.length} density clusters`
+                                  : `${riskHotspots.length} total clusters`}
+                        </p>
+                    )}
                 </div>
 
                 {/* Error toast */}
