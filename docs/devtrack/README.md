@@ -25,3 +25,4 @@
 | [#232](https://github.com/RatLoopz/sahidawa-india/pull/232) | 2026-05-18 | DevOps | 11 | @harshitsaxena214 | [View Doc](devtrack/2026-05/PR-232-refactor-optimize-docker-compose-with-build-cachin.md) |
 | [#233](https://github.com/RatLoopz/sahidawa-india/pull/233) | 2026-05-18 | ML/AI | 64 | @parinaB | [View Doc](devtrack/2026-05/PR-233-feat-ml-add-asr-transcribe-endpoint-for-multilingu.md) / [ADR](devtrack/adr/ADR-003-feat-ml-add-asr-transcribe-endpoint-for-multilingu.md) |
 | [#321](https://github.com/RatLoopz/sahidawa-india/pull/321) | 2026-05-19 | Frontend | 5 | @varshini-nandula | [View Doc](devtrack/2026-05/PR-321-ui-ux-improvement-remove-duplicate-ai-health-assis.md) |
+| [#312](https://github.com/RatLoopz/sahidawa-india/pull/312) | 2026-05-19 | ML/AI | 32 | @palakjaiswal16 | [View Doc](devtrack/2026-05/PR-312-codex-ml-telemetry-logging.md) / [ADR](devtrack/adr/ADR-004-codex-ml-telemetry-logging.md) |

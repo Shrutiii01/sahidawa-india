@@ -24,6 +24,7 @@ import { Link } from "@/i18n/routing";
 import { useTranslations } from "next-intl";
 import LanguageSwitcher from "./LanguageSwitcher";
 import Footer from "./components/Footer";
+import SearchBar from "./components/SearchBar";
 
 function formatRelativeTime(dateString: string | null): string {
     if (!dateString) return "Recent";
@@ -305,20 +306,7 @@ export default function SahiDawaHome() {
                 </div>
 
                 {/* ── Global Search ── */}
-                <div className="mt-8 rounded-[3rem] border border-slate-200 bg-white p-4 shadow-sm transition-all focus-within:ring-2 focus-within:ring-emerald-500/20">
-                    <div className="flex items-center gap-2 px-2 sm:gap-4">
-                        <Search className="ml-2 shrink-0 text-slate-400" size={24} />
-                        <input
-                            type="text"
-                            placeholder={tHome("search_placeholder")}
-                            className="w-full border-none bg-transparent px-4 py-3 font-medium text-slate-700 outline-none placeholder:text-slate-400"
-                            aria-label="Search medicine or batch"
-                        />
-                        <button className="shrink-0 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-slate-800 sm:px-6 sm:text-base">
-                            {tHome("search_button")}
-                        </button>
-                    </div>
-                </div>
+                <SearchBar />
 
                 {/* ── Live Alerts Panel (full-width) ── */}
                 <div className="mt-8 mb-20">
