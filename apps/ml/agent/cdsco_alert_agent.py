@@ -5,6 +5,7 @@ import pdfplumber
 import logging
 import sys
 from io import BytesIO
+from urllib.parse import urljoin
 
 # Adjust path so we can import services
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -14,14 +15,20 @@ logging.basicConfig(level=logging.INFO)
 
 CDSCO_ALERTS_URL = "https://cdsco.gov.in/opencms/opencms/en/Notifications/Alerts/"
 INGEST_API_URL = os.getenv("API_BASE_URL", "http://localhost:3000") + "/api/v1/alerts/ingest"
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "secret-key-123")
+
+API_SECRET_KEY = os.getenv("API_SECRET_KEY")
+if not API_SECRET_KEY:
+    logging.error("CRITICAL ERROR: API_SECRET_KEY is not set in environment.")
+    sys.exit(1)
+
+PROCESSED_PDFS_FILE = os.path.join(os.path.dirname(__file__), "processed_pdfs.txt")
 
 def scrape_cdsco_alerts():
     logging.info(f"Checking {CDSCO_ALERTS_URL} for new alerts...")
     try:
-        # Note: CDSCO often requires specific headers or fails SSL checks. 
-        # Disabling verify for the sake of functionality with government sites.
-        response = requests.get(CDSCO_ALERTS_URL, verify=False, timeout=15)
+        # TLS verification enabled for security as requested by the review.
+        # If CDSCO presents a known CA issue, pin it explicitly.
+        response = requests.get(CDSCO_ALERTS_URL, verify=True, timeout=15)
         response.raise_for_status()
     except requests.RequestException as e:
         logging.error(f"Failed to fetch CDSCO alerts page: {e}")
@@ -32,9 +39,7 @@ def scrape_cdsco_alerts():
     pdf_links = []
     for a in soup.find_all('a', href=True):
         if a['href'].lower().endswith('.pdf'):
-            link = a['href']
-            if not link.startswith('http'):
-                link = "https://cdsco.gov.in" + link
+            link = urljoin(CDSCO_ALERTS_URL, a['href'])
             pdf_links.append(link)
     
     if not pdf_links:
@@ -42,13 +47,21 @@ def scrape_cdsco_alerts():
         return
         
     recent_pdf = pdf_links[0]
-    logging.info(f"Processing recent alert PDF: {recent_pdf}")
     
+    # Deduplication check
+    if os.path.exists(PROCESSED_PDFS_FILE):
+        with open(PROCESSED_PDFS_FILE, "r") as f:
+            processed = f.read().splitlines()
+            if recent_pdf in processed:
+                logging.info(f"Skipping already processed PDF: {recent_pdf}")
+                return
+
+    logging.info(f"Processing recent alert PDF: {recent_pdf}")
     process_alert_pdf(recent_pdf)
 
 def process_alert_pdf(pdf_url: str):
     try:
-        pdf_response = requests.get(pdf_url, verify=False, timeout=15)
+        pdf_response = requests.get(pdf_url, verify=True, timeout=15)
         pdf_response.raise_for_status()
     except requests.RequestException as e:
         logging.error(f"Failed to download PDF {pdf_url}: {e}")
@@ -77,7 +90,10 @@ def process_alert_pdf(pdf_url: str):
         return
         
     logging.info(f"Extracted {len(alerts)} alerts. Sending to Ingest API...")
-    ingest_alerts(alerts)
+    if ingest_alerts(alerts):
+        # Mark as processed if ingest succeeds
+        with open(PROCESSED_PDFS_FILE, "a") as f:
+            f.write(pdf_url + "\n")
 
 def ingest_alerts(alerts: list):
     headers = {
@@ -93,10 +109,10 @@ def ingest_alerts(alerts: list):
         response = requests.post(INGEST_API_URL, json=payload, headers=headers)
         response.raise_for_status()
         logging.info("Successfully ingested alerts to the gateway.")
+        return True
     except requests.RequestException as e:
         logging.error(f"Failed to ingest alerts: {e}")
+        return False
 
 if __name__ == "__main__":
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     scrape_cdsco_alerts()

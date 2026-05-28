@@ -1,6 +1,24 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "../db/client";
 import webpush from "web-push";
+import { z } from "zod";
+
+if (!process.env.API_SECRET_KEY) {
+    console.error("CRITICAL ERROR: API_SECRET_KEY is not set. Terminating.");
+    process.exit(1);
+}
+
+const AlertSchema = z.object({
+    brand: z.string().optional(),
+    batch: z.string().optional(),
+    manufacturer: z.string().optional(),
+    alert_type: z.string().optional(),
+    reason: z.string().optional(),
+    state_district: z.string().optional(),
+    date: z.string().optional(),
+}).passthrough();
+
+const AlertsArraySchema = z.array(AlertSchema);
 
 // Configure web-push with VAPID details
 if (process.env.WEB_PUSH_VAPID_PUBLIC_KEY && process.env.WEB_PUSH_VAPID_PRIVATE_KEY) {
@@ -34,15 +52,24 @@ const alertsRouter = Router();
 alertsRouter.get("/", async (req: Request, res: Response) => {
     const rawPage = parseInt(req.query.page as string, 10);
     const rawLimit = parseInt(req.query.limit as string, 10);
+    const brand = req.query.brand as string;
+    const region = req.query.region as string;
 
     const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
     const limit = isNaN(rawLimit) || rawLimit < 1 ? 10 : Math.min(rawLimit, 100);
 
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await supabase
-        .from("drug_alerts")
-        .select("*", { count: "exact" })
+    let query = supabase.from("drug_alerts").select("*", { count: "exact" });
+    
+    if (brand) {
+        query = query.ilike("brand", `%${brand}%`);
+    }
+    if (region) {
+        query = query.ilike("state_district", `%${region}%`);
+    }
+
+    const { data, error, count } = await query
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
 
@@ -70,7 +97,7 @@ alertsRouter.get("/", async (req: Request, res: Response) => {
 alertsRouter.post("/ingest", async (req: Request, res: Response) => {
     // 1. Validate Secret Header
     const authHeader = req.headers["x-api-secret"];
-    const expectedSecret = process.env.API_SECRET_KEY || "secret-key-123";
+    const expectedSecret = process.env.API_SECRET_KEY;
 
     if (!authHeader || authHeader !== expectedSecret) {
         res.status(401).json({ error: "Unauthorized access" });
@@ -78,16 +105,19 @@ alertsRouter.post("/ingest", async (req: Request, res: Response) => {
     }
 
     const { alerts } = req.body;
-    if (!alerts || !Array.isArray(alerts)) {
-        res.status(400).json({ error: "Invalid payload: Expected an array of alerts" });
+    const parseResult = AlertsArraySchema.safeParse(alerts);
+    if (!parseResult.success) {
+        res.status(400).json({ error: "Invalid payload schema", details: parseResult.error });
         return;
     }
+    
+    const validatedAlerts = parseResult.data;
 
     try {
         // 2. Insert alerts into drug_alerts table
         const { data: insertedAlerts, error: insertError } = await supabase
             .from("drug_alerts")
-            .insert(alerts)
+            .insert(validatedAlerts)
             .select();
 
         if (insertError) {
@@ -97,14 +127,24 @@ alertsRouter.post("/ingest", async (req: Request, res: Response) => {
         }
 
         // 3. Update medicines table based on matched batches
-        for (const alert of alerts) {
+        const updatePromises = validatedAlerts.map(alert => {
             if (alert.batch) {
-                await supabase
+                let q = supabase
                     .from("medicines")
                     .update({ status: "recalled", is_counterfeit_alert: true })
                     .eq("batch_number", alert.batch);
+                
+                if (alert.manufacturer) {
+                    q = q.eq("manufacturer", alert.manufacturer);
+                } else if (alert.brand) {
+                    q = q.eq("brand_name", alert.brand);
+                }
+                return q;
             }
-        }
+            return Promise.resolve();
+        });
+        
+        await Promise.all(updatePromises);
 
         // 4. Dispatch Web Push Notifications
         const { data: subscriptions, error: subError } = await supabase
@@ -127,8 +167,12 @@ alertsRouter.post("/ingest", async (req: Request, res: Response) => {
                         auth: sub.auth
                     }
                 };
-                return webpush.sendNotification(pushSubscription, pushPayload).catch(err => {
+                return webpush.sendNotification(pushSubscription, pushPayload).catch(async err => {
                     console.error("Error sending push notification to endpoint:", sub.endpoint, err);
+                    if (err.statusCode === 404 || err.statusCode === 410) {
+                        console.log("Removing dead subscription:", sub.endpoint);
+                        await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+                    }
                 });
             });
 

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_core.prompts import ChatPromptTemplate
-    from langchain_core.output_parsers import JsonOutputParser
+    from langchain_core.output_parsers import PydanticOutputParser
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
@@ -41,7 +41,7 @@ def extract_alerts_from_text(text: str) -> List[Dict[str, Any]]:
             return []
 
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0, google_api_key=api_key)
-        parser = JsonOutputParser(pydantic_object=AlertList)
+        parser = PydanticOutputParser(pydantic_object=AlertList)
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are an expert at extracting structured information from pharmaceutical recall and alert notices."),
@@ -50,12 +50,15 @@ def extract_alerts_from_text(text: str) -> List[Dict[str, Any]]:
         
         chain = prompt | llm | parser
         
+        # We can implement chunking here if needed for very large PDFs, 
+        # but for now we rely on the large context window of gemini-1.5-pro.
         result = chain.invoke({
             "text": text,
             "format_instructions": parser.get_format_instructions()
         })
         
-        return result.get("alerts", [])
+        # result is now an AlertList instance
+        return [alert.dict() for alert in result.alerts]
     except Exception as e:
         logging.error(f"Error extracting alerts: {e}")
         return []

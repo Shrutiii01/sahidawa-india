@@ -41,37 +41,35 @@ export default function FullAlertsLogPage() {
     const [page, setPage] = useState(1);
     const [totalCount, setTotalCount] = useState(0);
 
-    const fetchAlerts = async () => {
-        setLoading(true);
-        setError(false);
-        try {
-            // Include search parameters if we had them supported in API, 
-            // but since API just has pagination, we fetch and then filter locally 
-            // OR we'd ideally pass them to API. For now, we'll fetch a larger limit to filter locally,
-            // or pass them down (assuming the backend gets updated to support them).
-            const res = await fetch(`${API_BASE}/api/v1/alerts?page=${page}&limit=50`);
-            if (!res.ok) throw new Error("Failed to fetch");
-            const data = await res.json();
-            setAllAlerts(data.data || []);
-            setTotalCount(data.totalCount || 0);
-        } catch (err) {
-            console.error(err);
-            setError(true);
-        } finally {
-            setLoading(false);
-        }
-    };
-
     useEffect(() => {
-        fetchAlerts();
-    }, [page]);
+        const fetchAlerts = async () => {
+            setLoading(true);
+            setError(false);
+            try {
+                let url = `${API_BASE}/api/v1/alerts?page=${page}&limit=50`;
+                if (brandSearch) url += `&brand=${encodeURIComponent(brandSearch)}`;
+                if (regionSearch) url += `&region=${encodeURIComponent(regionSearch)}`;
 
-    // Apply local filtration
-    const filteredAlerts = allAlerts.filter(alert => {
-        const brandMatch = (alert.brand_name || alert.brand || "").toLowerCase().includes(brandSearch.toLowerCase());
-        const regionMatch = (alert.state_district || "").toLowerCase().includes(regionSearch.toLowerCase());
-        return brandMatch && regionMatch;
-    });
+                const res = await fetch(url);
+                if (!res.ok) throw new Error("Failed to fetch");
+                const data = await res.json();
+                setAllAlerts(data.data || []);
+                setTotalCount(data.totalCount || 0);
+            } catch (err) {
+                console.error(err);
+                setError(true);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        // Debounce search slightly
+        const timer = setTimeout(() => {
+            fetchAlerts();
+        }, 400);
+
+        return () => clearTimeout(timer);
+    }, [page, brandSearch, regionSearch]);
 
     return (
         <div className="mx-auto max-w-5xl px-4 py-8 text-(--color-text-primary)">
@@ -157,8 +155,8 @@ export default function FullAlertsLogPage() {
                     <div className="rounded-2xl border border-(--color-border-muted) bg-(--color-surface-page) py-16 text-center font-medium text-(--color-text-muted)">
                         Loading alerts...
                     </div>
-                ) : filteredAlerts.length > 0 ? (
-                    filteredAlerts.map((alert) => {
+                ) : allAlerts.length > 0 ? (
+                    allAlerts.map((alert) => {
                         const isSystem = alert.brand_name === "SYSTEM_UPDATE" || alert.brand === "SYSTEM_UPDATE";
                         const isCritical =
                             alert.cdsco_approval_status === "banned" || alert.is_counterfeit_alert || alert.alert_type === "Banned";
@@ -274,8 +272,9 @@ export default function FullAlertsLogPage() {
                     Previous
                 </button>
                 <button
+                    disabled={page * 50 >= totalCount}
                     onClick={() => setPage(p => p + 1)}
-                    className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold"
+                    className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     Next
                 </button>
