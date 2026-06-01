@@ -62,13 +62,15 @@ export default async function LocaleLayout({
     return (
         <html lang={locale} suppressHydrationWarning>
             {/* REPLACE YOUR OLD BODY TAG WITH THIS ONE: */}
-            <body className="bg-(--color-surface-page) text-(--color-text-primary) transition-colors duration-300">
+            <body className="flex min-h-screen flex-col bg-(--color-surface-page) text-(--color-text-primary) transition-colors duration-300">
                 <ServiceWorkerProvider>
                     <ThemeProvider>
                         <NextIntlClientProvider messages={messages}>
                             <OfflineBanner />
                             <Navbar />
-                            <OfflineErrorBoundary>{children}</OfflineErrorBoundary>
+                            <main className="flex-grow">
+                                <OfflineErrorBoundary>{children}</OfflineErrorBoundary>
+                            </main>
                             <Footer />
                             <div className="no-print">
                                 <BackToTopButton />
